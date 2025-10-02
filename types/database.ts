@@ -11,6 +11,7 @@ export interface Database {
           price: number
           cover_image_url: string | null
           file_path: string
+          r2_url: string | null
         }
         Insert: {
           id?: string
@@ -21,6 +22,7 @@ export interface Database {
           price: number
           cover_image_url?: string | null
           file_path: string
+          r2_url?: string | null
         }
         Update: {
           id?: string
@@ -31,6 +33,36 @@ export interface Database {
           price?: number
           cover_image_url?: string | null
           file_path?: string
+          r2_url?: string | null
+        }
+      }
+      tracks: {
+        Row: {
+          id: string
+          created_at: string
+          album_id: string
+          title: string
+          description: string | null
+          track_number: number
+          r2_url: string
+        }
+        Insert: {
+          id?: string
+          created_at?: string
+          album_id: string
+          title: string
+          description?: string | null
+          track_number: number
+          r2_url: string
+        }
+        Update: {
+          id?: string
+          created_at?: string
+          album_id?: string
+          title?: string
+          description?: string | null
+          track_number?: number
+          r2_url?: string
         }
       }
       purchases: {

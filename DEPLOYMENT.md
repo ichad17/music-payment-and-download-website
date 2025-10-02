@@ -8,11 +8,19 @@ Follow these steps to deploy your music album sales site to production.
 
 - [ ] Create a production Supabase project
 - [ ] Run `supabase-setup.sql` in SQL Editor
-- [ ] Create `albums` storage bucket (private)
 - [ ] Configure RLS policies (included in SQL file)
 - [ ] Get production API keys from Settings → API
 - [ ] Configure email templates in Authentication → Email Templates
 - [ ] Set redirect URLs in Authentication → URL Configuration
+
+### 1.5. Cloudflare R2 Setup
+
+- [ ] Create production R2 bucket
+- [ ] Create R2 API token with read/write permissions
+- [ ] Note Account ID, Access Key ID, and Secret Access Key
+- [ ] (Optional) Configure custom domain for R2 bucket
+- [ ] Upload album and track files to R2 bucket
+- [ ] Update database records with correct R2 object keys
 
 ### 2. Stripe Setup
 
@@ -37,6 +45,13 @@ SUPABASE_SERVICE_ROLE_KEY=your_production_service_key
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_live_xxx
 STRIPE_SECRET_KEY=sk_live_xxx
 STRIPE_WEBHOOK_SECRET=whsec_xxx
+
+# Cloudflare R2 (Production)
+R2_ACCOUNT_ID=your_production_account_id
+R2_ACCESS_KEY_ID=your_production_access_key
+R2_SECRET_ACCESS_KEY=your_production_secret_key
+R2_BUCKET_NAME=your_production_bucket_name
+R2_PUBLIC_URL=https://your-custom-domain.com
 
 # App URL (Production)
 NEXT_PUBLIC_APP_URL=https://your-domain.com
@@ -160,8 +175,12 @@ NEXT_PUBLIC_APP_URL=https://your-domain.com
 
 ### Supabase Dashboard
 - [ ] Monitor database usage
-- [ ] Check storage usage
 - [ ] Review auth logs
+
+### Cloudflare R2 Dashboard
+- [ ] Monitor storage usage and egress
+- [ ] Check bucket access patterns
+- [ ] Review API request logs
 
 ## Database Seeding (Optional)
 
@@ -169,15 +188,23 @@ Add sample data for testing:
 
 ```sql
 -- Add a sample album
-INSERT INTO albums (title, artist, description, price, file_path, cover_image_url)
+INSERT INTO albums (title, artist, description, price, file_path, r2_url, cover_image_url)
 VALUES (
   'Best Album Ever',
   'Amazing Artist',
   'This is the best album you will ever hear.',
   19.99,
   'albums/best-album.zip',
+  'albums/best-album.zip',
   'https://images.unsplash.com/photo-1511379938547-c1f69419868d?w=800'
-);
+) RETURNING id;
+
+-- Add sample tracks (use the album id from above)
+INSERT INTO tracks (album_id, title, description, track_number, r2_url)
+VALUES 
+  ('album-id-here', 'Opening Song', 'An epic introduction to the album', 1, 'tracks/track-01.mp3'),
+  ('album-id-here', 'Middle Track', 'The heart of the album', 2, 'tracks/track-02.mp3'),
+  ('album-id-here', 'Final Song', 'A perfect ending', 3, 'tracks/track-03.mp3');
 
 -- Add gallery images
 INSERT INTO gallery_images (title, description, image_url, display_order)
@@ -205,10 +232,12 @@ VALUES
 - Check NEXT_PUBLIC_APP_URL is correct
 
 ### Downloads Not Working
-- Verify storage bucket exists and is named `albums`
-- Check file paths in database match storage
+- Verify R2 credentials in environment variables
+- Check R2 object keys match database `r2_url` values
 - Ensure user has purchased the album
-- Check pre-signed URL generation
+- Check pre-signed URL generation from R2
+- For legacy albums: Verify Supabase storage bucket exists
+- Check R2 bucket CORS settings if using custom domain
 
 ## Performance Optimization
 
