@@ -4,7 +4,7 @@ This file provides instructions for GitHub Copilot coding agent when working on 
 
 ## Project Overview
 
-This is a music payment and download website built with Next.js 15, Supabase, and Stripe. The application allows users to browse music albums, purchase them via Stripe Checkout, and download their purchased albums using secure pre-signed URLs.
+This is a music payment and download website built with Next.js 15, Supabase, Cloudflare R2, and Stripe. The application allows users to browse music albums, purchase them via Stripe Checkout, and download their purchased albums using secure pre-signed URLs from Cloudflare R2.
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ This is a music payment and download website built with Next.js 15, Supabase, an
 - **Supabase**:
   - PostgreSQL database with Row Level Security (RLS)
   - Authentication system
-  - Storage with private buckets for album files
+- **Cloudflare R2**: Object storage for album files with pre-signed URLs
 - **Stripe**: Payment processing with Checkout and webhooks
 
 ## Architecture
@@ -27,7 +27,7 @@ This is a music payment and download website built with Next.js 15, Supabase, an
 ### Key Principles
 1. **Server Components by Default**: Use React Server Components for all pages unless client interactivity is needed. Only mark components with `'use client'` when necessary.
 2. **Type Safety**: TypeScript is used throughout. Database types are defined in `types/database.ts`.
-3. **Security First**: Authentication via middleware, RLS policies, webhook signature verification, and private storage with pre-signed URLs.
+3. **Security First**: Authentication via middleware, RLS policies, webhook signature verification, and private object storage with pre-signed URLs from Cloudflare R2.
 4. **Serverless**: All API routes are serverless functions that auto-scale.
 
 ### Directory Structure
@@ -51,7 +51,8 @@ app/
 lib/
 ├── supabase.ts          # Client-side Supabase client
 ├── supabase-server.ts   # Server-side Supabase client
-└── stripe.ts            # Stripe configuration
+├── stripe.ts            # Stripe configuration
+└── r2.ts                # Cloudflare R2 client configuration (optional)
 
 types/
 └── database.ts          # TypeScript database schema types
@@ -101,6 +102,12 @@ middleware.ts            # Auth middleware (protects /admin and /downloads)
 - Server-side: Use `createServerSupabaseClient()` from `lib/supabase-server.ts`
 - Client-side: Use `createClientSupabaseClient()` from `lib/supabase.ts`
 
+### File Storage
+- Album files are stored in Cloudflare R2 (S3-compatible object storage)
+- Use AWS SDK v3 for S3-compatible operations with R2
+- Configure R2 credentials in environment variables
+- Generate pre-signed URLs for secure, temporary file access
+
 ### Authentication
 - Protected routes are handled by `middleware.ts` (currently `/admin` and `/downloads`)
 - To protect a new route, add it to the matcher in `middleware.ts`
@@ -115,10 +122,11 @@ middleware.ts            # Auth middleware (protects /admin and /downloads)
 - Record purchases in `purchases` table after successful payment
 
 ### File Downloads
-- Files stored in private Supabase Storage bucket named `albums`
-- Generate pre-signed URLs (1-hour validity) in `app/api/download/route.ts`
+- Files stored in Cloudflare R2 bucket (private object storage)
+- Generate pre-signed URLs (1-hour validity) in `app/api/download/route.ts` using Cloudflare R2 SDK
 - Always verify user owns the album before generating URL
 - Return URL to client, let browser handle download
+- Use AWS S3-compatible API for R2 interactions
 
 ## Testing
 
@@ -217,15 +225,48 @@ export default async function SomePage() {
 }
 ```
 
+### Generating Pre-signed URLs for R2
+```typescript
+// app/api/download/route.ts
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
+import { NextResponse } from 'next/server'
+
+const r2Client = new S3Client({
+  region: 'auto',
+  endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+})
+
+export async function POST(request: Request) {
+  // Verify user authentication and purchase ownership
+  const { albumId, filePath } = await request.json()
+  
+  // Generate pre-signed URL (1-hour validity)
+  const command = new GetObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: filePath,
+  })
+  
+  const url = await getSignedUrl(r2Client, command, { expiresIn: 3600 })
+  
+  return NextResponse.json({ url })
+}
+```
+
 ## Security Best Practices
 
 1. **Never commit secrets**: Use environment variables for all API keys and secrets
 2. **Verify webhooks**: Always verify Stripe webhook signatures before processing
 3. **Protect routes**: Use middleware for route protection, verify auth in API routes
-4. **Private storage**: Keep album files in private buckets, use pre-signed URLs
+4. **Private storage**: Keep album files in private Cloudflare R2 buckets, use pre-signed URLs with limited validity
 5. **RLS policies**: Enable and test Row Level Security policies in Supabase
 6. **Input validation**: Validate all user inputs in API routes
 7. **Service role key**: Only use `SUPABASE_SERVICE_ROLE_KEY` in server-side code, never expose to client
+8. **R2 credentials**: Keep Cloudflare R2 access credentials secure and server-side only
 
 ## Environment Variables
 
@@ -237,14 +278,19 @@ Required environment variables (see `.env.example`):
 - `STRIPE_SECRET_KEY`: Stripe secret key (server-only)
 - `STRIPE_WEBHOOK_SECRET`: Stripe webhook signing secret (server-only)
 - `NEXT_PUBLIC_APP_URL`: Application URL (e.g., http://localhost:3000 for dev)
+- `R2_ACCOUNT_ID`: Cloudflare R2 account ID (server-only)
+- `R2_ACCESS_KEY_ID`: Cloudflare R2 access key ID (server-only)
+- `R2_SECRET_ACCESS_KEY`: Cloudflare R2 secret access key (server-only)
+- `R2_BUCKET_NAME`: Cloudflare R2 bucket name for album files (server-only)
 
 ## Deployment
 
 The application is designed for Vercel:
 - Push to GitHub to trigger automatic deployment
-- Configure environment variables in Vercel dashboard
+- Configure environment variables in Vercel dashboard (including R2 credentials)
 - Update Stripe webhook URL to production domain
 - Ensure Supabase redirect URLs include production domain
+- Set up Cloudflare R2 bucket with appropriate CORS policies for pre-signed URLs
 
 See `DEPLOYMENT.md` for complete deployment checklist.
 
