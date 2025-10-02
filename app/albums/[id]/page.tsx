@@ -17,6 +17,13 @@ export default async function AlbumPage({ params }: { params: Promise<{ id: stri
     notFound()
   }
 
+  // Get tracks for this album
+  const { data: tracks } = await supabase
+    .from('tracks')
+    .select('*')
+    .eq('album_id', id)
+    .order('track_number', { ascending: true })
+
   // Check if user already purchased this album
   const {
     data: { user },
@@ -88,6 +95,36 @@ export default async function AlbumPage({ params }: { params: Promise<{ id: stri
               )}
             </div>
           </div>
+
+          {tracks && tracks.length > 0 && (
+            <div className="border-t border-gray-200 p-8">
+              <h2 className="text-2xl font-bold text-gray-900 mb-4">
+                Track List
+              </h2>
+              <div className="space-y-3">
+                {tracks.map((track: any) => (
+                  <div
+                    key={track.id}
+                    className="flex items-start gap-3 p-4 bg-gray-50 rounded-lg"
+                  >
+                    <span className="text-lg font-medium text-gray-500 min-w-[2rem]">
+                      {track.track_number}.
+                    </span>
+                    <div className="flex-1">
+                      <h3 className="font-semibold text-gray-900">
+                        {track.title}
+                      </h3>
+                      {track.description && (
+                        <p className="text-sm text-gray-600 mt-1">
+                          {track.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

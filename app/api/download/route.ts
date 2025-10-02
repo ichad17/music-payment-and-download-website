@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase-server'
+import { generateR2DownloadUrl } from '@/lib/r2'
 
 export async function POST(request: Request) {
   try {
@@ -30,20 +31,52 @@ export async function POST(request: Request) {
       )
     }
 
-    // Generate a pre-signed URL for the file (valid for 1 hour)
-    const { data, error } = await supabase.storage
+    // Get album to check if it has R2 URL
+    const { data: album, error: albumError } = await supabase
       .from('albums')
-      .createSignedUrl(filePath, 3600)
+      .select('r2_url')
+      .eq('id', albumId)
+      .single()
 
-    if (error || !data) {
-      console.error('Error creating signed URL:', error)
+    if (albumError) {
+      console.error('Error fetching album:', albumError)
       return NextResponse.json(
-        { error: 'Failed to generate download link' },
+        { error: 'Failed to fetch album information' },
         { status: 500 }
       )
     }
 
-    return NextResponse.json({ url: data.signedUrl })
+    let downloadUrl: string
+
+    // If album has R2 URL, use R2 for download (new method)
+    if (album?.r2_url) {
+      try {
+        downloadUrl = await generateR2DownloadUrl(album.r2_url, 3600)
+      } catch (error) {
+        console.error('Error generating R2 signed URL:', error)
+        return NextResponse.json(
+          { error: 'Failed to generate download link' },
+          { status: 500 }
+        )
+      }
+    } else {
+      // Fall back to Supabase storage (legacy method)
+      const { data, error } = await supabase.storage
+        .from('albums')
+        .createSignedUrl(filePath, 3600)
+
+      if (error || !data) {
+        console.error('Error creating signed URL:', error)
+        return NextResponse.json(
+          { error: 'Failed to generate download link' },
+          { status: 500 }
+        )
+      }
+
+      downloadUrl = data.signedUrl
+    }
+
+    return NextResponse.json({ url: downloadUrl })
   } catch (error: any) {
     console.error('Download error:', error)
     return NextResponse.json(

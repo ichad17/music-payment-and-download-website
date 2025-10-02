@@ -1,13 +1,15 @@
 # Music Payment and Download Website
 
-A full-stack music album sales platform built with Next.js 15 (App Router), Supabase, and Stripe. Features secure authentication, auth-gated downloads using pre-signed URLs, payment processing with automatic account provisioning, and an admin gallery for photo management.
+A full-stack music album sales platform built with Next.js 15 (App Router), Supabase, Cloudflare R2, and Stripe. Features secure authentication, auth-gated downloads using pre-signed URLs, payment processing with automatic account provisioning, individual track downloads, and an admin gallery for photo management.
 
 ## Features
 
 - 🎵 **Album Marketplace**: Browse and purchase music albums
 - 🔐 **Secure Authentication**: Email/password authentication via Supabase
 - 💳 **Stripe Checkout**: Secure payment processing with Stripe
-- 📥 **Secure Downloads**: Auth-gated downloads using pre-signed URLs from Supabase Storage
+- 📥 **Secure Downloads**: Auth-gated downloads using pre-signed URLs from Cloudflare R2
+- 🎼 **Individual Track Downloads**: Download entire albums or individual tracks
+- 📝 **Track Descriptions**: Each track can have its own description
 - 🎨 **Admin Gallery**: Manage photo gallery with add/delete functionality
 - ⚡ **Automatic Provisioning**: Stripe webhook automatically records purchases
 - 🚀 **Production Ready**: Optimized for Vercel deployment
@@ -19,7 +21,7 @@ A full-stack music album sales platform built with Next.js 15 (App Router), Supa
 - **Styling**: Tailwind CSS
 - **Backend**: Next.js API Routes
 - **Database**: Supabase (PostgreSQL)
-- **Storage**: Supabase Storage
+- **Storage**: Cloudflare R2 (S3-compatible)
 - **Authentication**: Supabase Auth
 - **Payments**: Stripe Checkout + Webhooks
 - **Deployment**: Vercel
@@ -30,6 +32,7 @@ A full-stack music album sales platform built with Next.js 15 (App Router), Supa
 
 - Node.js 18+ and npm
 - Supabase account
+- Cloudflare account (for R2)
 - Stripe account
 
 ### 1. Clone the Repository
@@ -49,11 +52,21 @@ npm install
 
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Go to SQL Editor and run the contents of `supabase-setup.sql`
-3. Create a storage bucket named `albums`:
-   - Go to Storage → Create bucket
-   - Name: `albums`
-   - Make it private (not public)
-4. Get your API keys from Settings → API
+3. Get your API keys from Settings → API
+
+### 3.5. Set Up Cloudflare R2
+
+1. Log in to your Cloudflare dashboard
+2. Go to R2 → Create bucket
+3. Name your bucket (e.g., `music-files`)
+4. Create API token:
+   - Go to R2 → Manage R2 API Tokens
+   - Create API token with read and write permissions
+   - Save the Access Key ID and Secret Access Key
+5. Note your Account ID from the R2 dashboard
+6. (Optional) Set up a custom domain for public access:
+   - Go to your bucket settings → Connect Domain
+   - Follow the instructions to connect a custom domain
 
 ### 4. Set Up Stripe
 
@@ -86,6 +99,13 @@ NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
 STRIPE_SECRET_KEY=your_stripe_secret_key
 STRIPE_WEBHOOK_SECRET=your_stripe_webhook_secret
 
+# Cloudflare R2
+R2_ACCOUNT_ID=your_r2_account_id
+R2_ACCESS_KEY_ID=your_r2_access_key_id
+R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
+R2_BUCKET_NAME=your_r2_bucket_name
+R2_PUBLIC_URL=your_r2_public_url
+
 # App
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
@@ -107,7 +127,8 @@ music-payment-and-download-website/
 │   ├── admin/               # Admin dashboard
 │   ├── api/
 │   │   ├── checkout/        # Stripe checkout endpoint
-│   │   ├── download/        # Pre-signed URL generator
+│   │   ├── download/        # Album download (R2 pre-signed URL)
+│   │   ├── download-track/  # Individual track download
 │   │   ├── webhooks/stripe/ # Stripe webhook handler
 │   │   └── admin/gallery/   # Gallery management API
 │   ├── auth/                # Auth callback handlers
@@ -121,7 +142,8 @@ music-payment-and-download-website/
 ├── lib/
 │   ├── supabase.ts          # Client-side Supabase client
 │   ├── supabase-server.ts   # Server-side Supabase client
-│   └── stripe.ts            # Stripe configuration
+│   ├── stripe.ts            # Stripe configuration
+│   └── r2.ts                # Cloudflare R2 client
 ├── types/
 │   └── database.ts          # TypeScript database types
 ├── middleware.ts            # Auth middleware
@@ -138,7 +160,16 @@ music-payment-and-download-website/
 - `description` (TEXT): Album description
 - `price` (NUMERIC): Price in USD
 - `cover_image_url` (TEXT): Cover image URL
-- `file_path` (TEXT): Path to file in Supabase Storage
+- `file_path` (TEXT): Path to file in Supabase Storage (legacy)
+- `r2_url` (TEXT): Cloudflare R2 object key for album download
+
+### Tracks Table
+- `id` (UUID): Primary key
+- `album_id` (UUID): Reference to albums
+- `title` (TEXT): Track title
+- `description` (TEXT): Track description
+- `track_number` (INTEGER): Track number/order
+- `r2_url` (TEXT): Cloudflare R2 object key for track download
 
 ### Purchases Table
 - `id` (UUID): Primary key
@@ -156,15 +187,22 @@ music-payment-and-download-website/
 
 ## Key Features Explained
 
-### Secure Downloads with Pre-signed URLs
+### Secure Downloads with Cloudflare R2
 
 When a user clicks download, the system:
 1. Verifies the user is authenticated
 2. Checks if the user purchased the album
-3. Generates a temporary pre-signed URL (valid for 1 hour)
+3. Generates a temporary pre-signed URL from R2 (valid for 1 hour)
 4. Returns the URL to the client
 
-This ensures only authorized users can download purchased content.
+This ensures only authorized users can download purchased content while keeping costs low with R2's free egress.
+
+### Individual Track Downloads
+
+- Albums can have multiple tracks with descriptions
+- Users who purchase an album can download individual tracks
+- Each track has its own pre-signed URL for secure, authorized access
+- Track listings appear on both album detail pages and the downloads page
 
 ### Stripe Webhook Integration
 
@@ -195,14 +233,16 @@ The webhook at `/api/webhooks/stripe`:
 1. Update `NEXT_PUBLIC_APP_URL` to your Vercel URL
 2. Update Stripe webhook URL to `https://your-domain.com/api/webhooks/stripe`
 3. Update Supabase redirect URLs in Authentication settings
+4. Configure R2 environment variables in Vercel project settings
 
 ## Usage
 
 ### Adding Albums
 
-1. Add albums directly in Supabase database or create an admin UI
-2. Upload album files to the `albums` storage bucket
-3. Reference the file path in the `file_path` column
+1. Upload album files to your Cloudflare R2 bucket
+2. Add album records to Supabase database with the R2 object key in `r2_url`
+3. (Optional) Add individual tracks to the `tracks` table with their own R2 URLs
+4. Each track can have a `description` field for additional information
 
 ### Managing Gallery
 
@@ -226,9 +266,11 @@ Use Stripe test cards:
 
 ### Downloads not working
 
-- Verify storage bucket exists and is named `albums`
-- Check file paths match between database and storage
+- Verify R2 credentials are correct in environment variables
+- Check R2 object keys match the `r2_url` values in database
 - Ensure user has purchased the album
+- Check R2 bucket permissions and CORS settings if needed
+- For legacy albums: Verify Supabase storage bucket exists and is named `albums`
 
 ### Build errors
 
